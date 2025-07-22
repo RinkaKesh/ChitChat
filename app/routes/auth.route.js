@@ -1,5 +1,18 @@
 const authController = require("../modules/user/auth.controller");
-const authMiddleware = require("../modules/user/auth.middleware")
+const authMiddleware = require("../modules/user/auth.middleware");
+const fileConfig=require('../../configs/file.config')
+
+const fileConfig = require("../../configs/file.config");
+const multer = require("multer");
+const storeImage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, fileConfig.serviceUrl)
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + "_" + file.originalname)
+    }
+})
+const upload = multer({ storage: storeImage })
 
 module.exports = (app) => {
     app.post("/api/auth/signup", authController.signup);

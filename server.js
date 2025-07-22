@@ -43,17 +43,25 @@ io.on("connection", (socket) => {
     connectedUsers.set(userId, socket.id);
     console.log(`User ${userId} joined with socket ${socket.id}`);
   });
-
+  // for group 
+  socket.on("joinGroups", (groupIds) => {
+    if (Array.isArray(groupIds)) {
+      groupIds.forEach(id => {
+        socket.join(`group-${id}`);
+        console.log(`Socket ${socket.id} joined group-${id}`);
+      });
+    }
+  });
   socket.on("sendMessage", async ({ senderId, receiverId, message }) => {
     try {
       console.log("Message received:", { senderId, receiverId, message });
-      
-      io.to(receiverId).emit("receiveMessage", { 
-        senderId, 
+
+      io.to(receiverId).emit("receiveMessage", {
+        senderId,
         message,
         timestamp: new Date()
       });
-      
+
       socket.emit("messageSent", { success: true });
     } catch (error) {
       socket.emit("messageError", { error: error.message });

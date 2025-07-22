@@ -1,68 +1,107 @@
 
 const MessageModel = require("./message.model");
+const GroupModel=require("../group/group.model");
 
 exports.sendMessage = async (req, res) => {
   try {
-    const { receiver, content } = req.body;
-    const sender = req.userId; 
-     console.log("from msg controller",sender);
-     
-    if (!receiver || !content) {
-      return res.status(400).send({ 
-        message: "Receiver and content are required" 
+    const { receiver, content, groupId } = req.body;
+    const sender = req.userId;
+
+    if (!content || (!receiver && !groupId)) {
+      return res.status(400).send({
+        message: "Message content and target (receiver or groupId) are required"
       });
     }
 
-    const newMessage = await MessageModel.create({ 
-      sender, 
-      receiver, 
-      content 
-    });
+   
+    if (groupId) {
+      const group = await GroupModel.findById(groupId);
+      if (!group) {
+        return res.status(404).send({ message: "Group not found" });
+      }
+
+      if (!group.members.includes(sender)) {
+        return res.status(403).send({ message: "You are not a member of this group" });
+      }
+    }
+
+    const messagePayload = {
+      sender,
+      content,
+      receiver: groupId ? null : receiver,
+      groupId: groupId || null
+    };
+
+    const newMessage = await MessageModel.create(messagePayload);
 
     const io = req.app.get("io");
     if (io) {
-      io.to(receiver).emit("receiveMessage", { 
-        senderId: sender, 
-        message: newMessage 
-      });
+      if (groupId) {
+        io.to(`group-${groupId}`).emit("receiveGroupMessage", {
+          groupId,
+          senderId: sender,
+          message: newMessage
+        });
+      } else {
+        io.to(receiver).emit("receiveMessage", {
+          senderId: sender,
+          message: newMessage
+        });
+      }
     }
 
-    res.status(201).send({ 
-      message: "Message sent", 
-      data: newMessage 
+    res.status(201).send({
+      message: "Message sent",
+      data: newMessage
     });
   } catch (err) {
-    res.status(500).send({ 
-      message: "Failed to send message", 
-      error: err.message 
+    res.status(500).send({
+      message: "Failed to send message",
+      error: err.message
     });
   }
 };
 
 exports.getMessages = async (req, res) => {
   try {
-    const { id: selectedUserId } = req.params;
+    const { id } = req.params;
+    const { type = "private" } = req.query; 
     const myId = req.userId;
 
-    if (!selectedUserId) {
+    if (!id) {
       return res.status(400).send({ 
-        message: "User ID is required" 
+        message: "Target ID is required" 
       });
     }
 
-    const messages = await MessageModel.find({
-      $or: [
-        { sender: myId, receiver: selectedUserId },
-        { sender: selectedUserId, receiver: myId }
-      ]
-    }).sort({ createdAt: 1 });
+    let messages;
 
-    await MessageModel.updateMany(
-      { sender: selectedUserId, receiver: myId },
-      { read: true }
-    );
+    if (type === "group") {
+      // Group chat messages
+      messages = await MessageModel.find({ groupId: id })
+        .sort({ createdAt: 1 })
+        .populate("sender", "firstname lastname");
+
+    } else {
+      // Private chat messages
+      messages = await MessageModel.find({
+        $or: [
+          { sender: myId, receiver: id },
+          { sender: id, receiver: myId }
+        ]
+      })
+      .sort({ createdAt: 1 })
+      .populate("sender", "firstname lastname");
+
+      // Mark messages from selected user as read
+      await MessageModel.updateMany(
+        { sender: id, receiver: myId, read: false },
+        { read: true }
+      );
+    }
 
     res.status(200).send({ messages });
+
   } catch (error) {
     res.status(500).send({ message: error.message });
   }

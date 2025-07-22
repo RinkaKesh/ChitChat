@@ -1,86 +1,48 @@
 const mongoose = require("mongoose")
 
-// const userSchema = new mongoose.Schema({
-//     firstname: { type: String, required: true },
-//     lastname: { type: String, required: true },
-//     email: { type: String, required: true, unique: true, lowercase: true },
-//     phone: { type: String, required: true },
-//     gender: {
-//         type: String, required: true, enum: {
-//             values: ["male", "female", "preferred not to say"],
-//             message: '{VALUE} is not a valid gender option'
-//         }
-//     },
-//     password: { type: String, required: true, select: false },
-//     role: {
-//         type: String, require: true, enum: ['user', 'admin'], default: 'user'
-//     },
-//     createdAt: {
-//         type: Date,
-//         default: () => {
-//             return Date.now()
-//         },
-//         immutable: true
-//     },
-//     updatedAt: {
-//         type: Date,
-//         default: () => {
-//             return Date.now()
-//         }
-//     }
-// })
-// userSchema.index({ email: 1 });
-// userSchema.index({ _id: 1, isActive: 1 });
-// const UserModel=mongoose.model("user",userSchema)
-
-// module.exports=UserModel
 const userSchema = new mongoose.Schema({
     firstname: { type: String, required: true, trim: true },
     lastname: { type: String, required: true, trim: true },
     email: { 
-        type: String, 
-        required: true, 
-        unique: true, 
-        lowercase: true,
+        type: String, required: true,unique: true, lowercase: true,
         trim: true,
-        validate: {
+         validate: {
             validator: function(email) {
                 return /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/.test(email);
             },
             message: 'Please enter a valid email'
         }
     },
-    phone: { 
-        type: String, 
-        required: true,
+      phone: { 
+        type: String, required: true, 
         validate: {
             validator: function(phone) {
                 return /^[+]?[\d\s\-\(\)]+$/.test(phone);
             },
             message: 'Please enter a valid phone number'
-        }
-    },
-    gender: {
+        }  
+    },  
+     gender: {
         type: String, 
         required: true, 
         enum: {
             values: ["male", "female", "preferred not to say"],
             message: '{VALUE} is not a valid gender option'
         }
-    },
+    },    
     password: { 
         type: String, 
         required: true, 
         select: false,
         minlength: [6, 'Password must be at least 6 characters long']
-    },
+    },   
     role: {
         type: String, 
         required: true, 
         enum: ['user', 'admin'], 
         default: 'user'
     },
-    isActive: {
+   isActive: {
         type: Boolean,
         default: true
     },
@@ -90,8 +52,6 @@ const userSchema = new mongoose.Schema({
 }, {
     timestamps: true 
 });
-
-
 // userSchema.index({ email: 1 });
 // userSchema.index({ _id: 1, isActive: 1 });
 
