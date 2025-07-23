@@ -6,6 +6,7 @@ const { Server } = require("socket.io");
 
 const serverConfig = require("./configs/server.config");
 const dbConfig = require("./configs/db.config");
+const fileConfig = require("./configs/file.config")
 
 const app = express();
 
@@ -17,6 +18,7 @@ app.use(cors({
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(fileConfig.renderUrl));
 
 // routes
 require("./app/routes/index")(app);
@@ -88,3 +90,6 @@ mongoose.connection.on("error", console.error.bind(console, "MongoDB error:"));
 mongoose.connection.once("open", () => {
   console.log("Connected to MongoDB");
 });
+
+
+

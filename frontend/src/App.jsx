@@ -35,27 +35,45 @@ function App() {
     scrollToBottom();
   }, [messages]);
 
-  // socket 
   useEffect(() => {
     if (user) {
       socket.emit('join', user._id);
-
+      
+      groups.forEach(group => {
+        if (group.members.some(member => member._id === user._id)) {
+          socket.emit('joinGroup', group._id);
+        }
+      });
       socket.on('receiveMessage', (data) => {
-        if (
-          (selectedUser && data.message.receiver === selectedUser._id) ||
-          (selectedGroup && data.message.groupId === selectedGroup._id)
-        ) {
+        console.log('Received private message:', data);
+        if (selectedUser && 
+            ((data.message.sender === selectedUser._id && data.message.receiver === user._id) ||
+             (data.message.sender === user._id && data.message.receiver === selectedUser._id))) {
           setMessages(prev => [...prev, data.message]);
         }
         fetchUsers();
+      });
+
+      socket.on('receiveGroupMessage', (data) => {
+        console.log('Received group message:', data);
+        if (selectedGroup && data.groupId === selectedGroup._id) {
+          setMessages(prev => [...prev, data.message]);
+        }
+        fetchGroups();
+      });
+
+      socket.on('groupCreated', (data) => {
+        socket.emit('joinGroup', data.groupId);
         fetchGroups();
       });
     }
 
     return () => {
       socket.off('receiveMessage');
+      socket.off('receiveGroupMessage');
+      socket.off('groupCreated');
     };
-  }, [user, selectedUser, selectedGroup]); 
+  }, [user, selectedUser, selectedGroup, groups]);
 
   // Login
   const handleLogin = async () => {
@@ -76,8 +94,8 @@ function App() {
       if (response.ok) {
         setUser(data.data);
         localStorage.setItem('token', data.data.accessToken);
-        fetchUsers();
-        fetchGroups();
+        await fetchUsers();
+        await fetchGroups();
         setCurrentView('chat');
       } else {
         alert(data.message);
@@ -132,7 +150,8 @@ function App() {
       console.error('Failed to fetch users:', error);
     }
   };
-  // Fetch groups
+
+ 
   const fetchGroups = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -166,6 +185,8 @@ function App() {
         setGroups(prev => [...prev, data.group]);
         setNewGroupName('');
         setSelectedGroupMembers([]);
+        
+        socket.emit('joinGroup', data.group._id);
       }
     } catch (err) {
       console.error('Group creation failed', err);
@@ -173,7 +194,7 @@ function App() {
   };
 
   const fetchMessages = async (userId) => {
-     console.log(`Fetching  messages for user ${userId}`);
+    console.log(`Fetching messages for user ${userId}`);
     try {
       const token = localStorage.getItem('token');
       const response = await fetch(`${API_BASE}/messages/${userId}`, {
@@ -190,12 +211,13 @@ function App() {
       console.error('Failed to fetch messages:', error);
     }
   };
+
   const fetchGroupMessages = async (groupId) => {
     console.log(`Fetching group messages for group ${groupId}`);
 
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch(`${API_BASE}/messages/${groupId}`, {
+      const res = await fetch(`${API_BASE}/messages/${groupId}?type=group`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -234,12 +256,20 @@ function App() {
       if (res.ok) {
         setMessages(prev => [...prev, data.data]);
         setNewMessage('');
-        socket.emit('sendMessage', {
-          senderId: user._id,
-          receiverId: selectedUser?._id,
-          groupId: selectedGroup?._id,
-          message: data.data
-        });
+        
+        if (selectedGroup) {
+          socket.emit('sendGroupMessage', {
+            senderId: user._id,
+            groupId: selectedGroup._id,
+            message: data.data
+          });
+        } else {
+          socket.emit('sendMessage', {
+            senderId: user._id,
+            receiverId: selectedUser._id,
+            message: data.data
+          });
+        }
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -252,11 +282,14 @@ function App() {
     console.log(selectedUser);
     fetchMessages(selectedUser._id);
   };
- const selectGroup = (group) => {
+
+  const selectGroup = (group) => {
     setSelectedUser(null); 
     setSelectedGroup(group);
     fetchGroupMessages(group._id);
+    socket.emit('joinGroup', group._id);
   };
+
   const logout = () => {
     setUser(null);
     setUsers([]);
@@ -274,7 +307,7 @@ function App() {
       setCurrentView('chat');
     }
   }, []);
-
+// login 
   if (currentView === 'login') {
     return (
       <div style={{ padding: '20px', maxWidth: '400px', margin: '50px auto' }}>
@@ -372,7 +405,6 @@ function App() {
 
   return (
     <div style={{ display: 'flex', height: '100vh' }}>
-
       <div style={{ width: '300px', borderRight: '1px solid #ccc', padding: '10px', overflowY: 'auto' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
           <h3>Chat</h3>
@@ -390,7 +422,7 @@ function App() {
           </div>
         )}
 
-       {/* group  */}
+        {/* Group creation */}
         <div style={{ marginBottom: '20px', padding: '10px', border: '1px solid #ddd', borderRadius: '5px' }}>
           <h4>Create Group</h4>
           <input 
@@ -422,7 +454,6 @@ function App() {
           </button>
         </div>
 
-        
         <h4>Users</h4>
         <div>
           {users.map((u) => (
@@ -464,7 +495,6 @@ function App() {
           ))}
         </div>
 
-        
         <h4>Your Groups</h4>
         <div>
           {groups.map(group => (
@@ -489,11 +519,9 @@ function App() {
         </div>
       </div>
 
-      
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
         {(selectedUser || selectedGroup) ? (
           <>
-            
             <div style={{ padding: '15px', borderBottom: '1px solid #ccc', backgroundColor: '#f5f5f5' }}>
               <h4>
                 {selectedUser 
@@ -513,11 +541,17 @@ function App() {
                     padding: '8px',
                     borderRadius: '5px',
                     maxWidth: '70%',
-                    backgroundColor: msg.sender === user?._id ? '#dcf8c6' : '#f1f1f1',
-                    marginLeft: msg.sender === user?._id ? 'auto' : '0',
-                    marginRight: msg.sender === user?._id ? '0' : 'auto'
+                    backgroundColor: msg.sender === user?._id || msg.sender?._id === user?._id ? '#dcf8c6' : '#f1f1f1',
+                    marginLeft: msg.sender === user?._id || msg.sender?._id === user?._id ? 'auto' : '0',
+                    marginRight: msg.sender === user?._id || msg.sender?._id === user?._id ? '0' : 'auto'
                   }}
                 >
+                  {/* Show sender name for group messages */}
+                  {selectedGroup && msg.sender?._id !== user?._id && (
+                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '3px', fontWeight: 'bold' }}>
+                      {msg.sender?.firstname} {msg.sender?.lastname}
+                    </div>
+                  )}
                   <div>{msg.content}</div>
                   <div style={{ fontSize: '11px', color: '#666', marginTop: '5px' }}>
                     {new Date(msg.createdAt).toLocaleTimeString()}
@@ -527,7 +561,6 @@ function App() {
               <div ref={messagesEndRef} />
             </div>
 
-           
             <div style={{ padding: '10px', borderTop: '1px solid #ccc', display: 'flex' }}>
               <input
                 type="text"

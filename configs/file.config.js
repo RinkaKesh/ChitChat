@@ -1,7 +1,7 @@
 module.exports = {
 
     renderUrl : 'uploads',
-    avtarUrl:'./uploads/user_avtar',
+    avatarUrl:'./uploads/user_avatar',
     messageUrl:'./uploads/message'
       
 }

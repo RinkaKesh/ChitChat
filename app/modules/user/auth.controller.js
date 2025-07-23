@@ -228,8 +228,8 @@ exports.getProfile = async (req, res) => {
 exports.updateProfile = async (req, res) => {
     try {
         const userId = req.userId;
-        console.log("userId from update",userId);
-        
+        console.log("userId from update", userId);
+
         const { firstname, lastname, phone, gender } = req.body;
 
         const updateData = {};
@@ -238,6 +238,11 @@ exports.updateProfile = async (req, res) => {
         if (phone) updateData.phone = phone.trim();
         if (gender) updateData.gender = gender;
 
+        if (req.files && req.files.length > 0) {
+            updateData.avatar = req.files[0].filename;
+        }
+           console.log(req.files,"from update of authController");
+           
         const updatedUser = await UserModel.findByIdAndUpdate(
             userId,
             updateData,
@@ -254,9 +259,10 @@ exports.updateProfile = async (req, res) => {
             data: updatedUser,
             message: "Profile updated successfully"
         });
+
     } catch (error) {
         console.error("Update profile error:", error);
-        
+
         if (error.name === 'ValidationError') {
             const messages = Object.values(error.errors).map(err => err.message);
             return res.status(400).send({
