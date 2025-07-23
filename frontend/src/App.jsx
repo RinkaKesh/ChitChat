@@ -10,6 +10,7 @@ function App() {
   const [selectedUser, setSelectedUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
+  const [selectedFile, setSelectedFile] = useState(null);
   const [unreadCounts, setUnreadCounts] = useState({});
   const [currentView, setCurrentView] = useState('login');
 
@@ -25,8 +26,9 @@ function App() {
   const [phone, setPhone] = useState('');
   const [gender, setGender] = useState('male');
 
-  const messagesEndRef = useRef(null);
 
+  const messagesEndRef = useRef(null);
+  const [previewFile, setPreviewFile] = useState(null);
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -38,44 +40,65 @@ function App() {
   useEffect(() => {
     if (user) {
       socket.emit('join', user._id);
-      
+
       groups.forEach(group => {
         if (group.members.some(member => member._id === user._id)) {
           socket.emit('joinGroup', group._id);
         }
       });
-      socket.on('receiveMessage', (data) => {
-        console.log('Received private message:', data);
-        if (selectedUser && 
-            ((data.message.sender === selectedUser._id && data.message.receiver === user._id) ||
-             (data.message.sender === user._id && data.message.receiver === selectedUser._id))) {
-          setMessages(prev => [...prev, data.message]);
-        }
-        fetchUsers();
-      });
-
-      socket.on('receiveGroupMessage', (data) => {
-        console.log('Received group message:', data);
-        if (selectedGroup && data.groupId === selectedGroup._id) {
-          setMessages(prev => [...prev, data.message]);
-        }
-        fetchGroups();
-      });
-
-      socket.on('groupCreated', (data) => {
-        socket.emit('joinGroup', data.groupId);
-        fetchGroups();
-      });
     }
+  }, [user, groups]);
+
+  // setup socket 
+  useEffect(() => {
+    const handlePrivateMessage = (data) => {
+      console.log('Received private message:', data);
+      if (
+        selectedUser &&
+        ((data.message.sender === selectedUser._id && data.message.receiver === user._id) ||
+          (data.message.sender === user._id && data.message.receiver === selectedUser._id))
+      ) {
+        setMessages(prev => [...prev, data.message]);
+      }
+      fetchUsers();
+    };
+
+    const handleGroupMessage = (data) => {
+      console.log('Received group message:', data);
+      if (selectedGroup && data.groupId === selectedGroup._id) {
+        setMessages(prev => [...prev, data.message]);
+      }
+      fetchGroups();
+    };
+
+    const handleGroupCreated = (data) => {
+      socket.emit('joinGroup', data.groupId);
+      fetchGroups();
+    };
+
+    const handleReactionUpdated = ({ messageId, reactions }) => {
+      setMessages(prev =>
+        prev.map(msg =>
+          msg._id === messageId ? { ...msg, reactions } : msg
+        )
+      );
+    };
+
+    socket.on('receiveMessage', handlePrivateMessage);
+    socket.on('receiveGroupMessage', handleGroupMessage);
+    socket.on('groupCreated', handleGroupCreated);
+    socket.on('reactionUpdated', handleReactionUpdated);
 
     return () => {
-      socket.off('receiveMessage');
-      socket.off('receiveGroupMessage');
-      socket.off('groupCreated');
+      socket.off('receiveMessage', handlePrivateMessage);
+      socket.off('receiveGroupMessage', handleGroupMessage);
+      socket.off('groupCreated', handleGroupCreated);
+      socket.off('reactionUpdated', handleReactionUpdated);
     };
-  }, [user, selectedUser, selectedGroup, groups]);
+  }, [user, selectedUser, selectedGroup]); 
 
-  // Login
+
+  // login
   const handleLogin = async () => {
     if (!email || !password) {
       alert('Please fill all fields');
@@ -105,7 +128,7 @@ function App() {
     }
   };
 
-  // Register
+  // registration
   const handleRegister = async () => {
     if (!firstname || !lastname || !email || !phone || !password) {
       alert('Please fill all fields');
@@ -151,7 +174,7 @@ function App() {
     }
   };
 
- 
+
   const fetchGroups = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -185,7 +208,7 @@ function App() {
         setGroups(prev => [...prev, data.group]);
         setNewGroupName('');
         setSelectedGroupMembers([]);
-        
+
         socket.emit('joinGroup', data.group._id);
       }
     } catch (err) {
@@ -205,6 +228,8 @@ function App() {
 
       if (response.ok) {
         setMessages(data.messages);
+        console.log(messages);
+
         setUnreadCounts(prev => ({ ...prev, [userId]: 0 }));
       }
     } catch (error) {
@@ -234,29 +259,45 @@ function App() {
   };
 
   const sendMessage = async () => {
-    if (!newMessage.trim()) return;
+    if (!newMessage.trim() && !selectedFile) return;
 
     const token = localStorage.getItem('token');
-    const body = {
-      content: newMessage.trim(),
-      ...(selectedUser ? { receiver: selectedUser._id } : {}),
-      ...(selectedGroup ? { groupId: selectedGroup._id } : {})
-    };
+    const formData = new FormData();
+
+    if (newMessage.trim()) {
+      formData.append('content', newMessage.trim());
+    }
+
+    if (selectedFile) {
+      formData.append('file', selectedFile);
+    }
+
+    if (selectedUser) {
+      formData.append('receiver', selectedUser._id);
+    }
+
+    if (selectedGroup) {
+      formData.append('groupId', selectedGroup._id);
+    }
 
     try {
       const res = await fetch(`${API_BASE}/messages`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
         },
-        body: JSON.stringify(body)
+        body: formData
       });
+
       const data = await res.json();
       if (res.ok) {
         setMessages(prev => [...prev, data.data]);
         setNewMessage('');
-        
+        setSelectedFile(null); 
+
+        const fileInput = document.querySelector('input[type="file"]');
+        if (fileInput) fileInput.value = '';
+
         if (selectedGroup) {
           socket.emit('sendGroupMessage', {
             senderId: user._id,
@@ -275,16 +316,44 @@ function App() {
       console.error('Failed to send message:', err);
     }
   };
+  const isImage = (filename) => {
+    return /\.(jpg|jpeg|png|gif|webp)$/i.test(filename);
+  };
+
+  //reaction
+  const handleReaction = async (messageId, emoji) => {
+    console.log(messageId, emoji);
+
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`${API_BASE}/messages/${messageId}/react`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ emoji })
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        console.error(data.message);
+      }
+    } catch (err) {
+      console.error("Failed to send reaction:", err.message);
+    }
+  };
+
 
   const selectUser = (selectedUser) => {
-    setSelectedGroup(null); 
+    setSelectedGroup(null);
     setSelectedUser(selectedUser);
     console.log(selectedUser);
     fetchMessages(selectedUser._id);
   };
 
   const selectGroup = (group) => {
-    setSelectedUser(null); 
+    setSelectedUser(null);
     setSelectedGroup(group);
     fetchGroupMessages(group._id);
     socket.emit('joinGroup', group._id);
@@ -307,7 +376,8 @@ function App() {
       setCurrentView('chat');
     }
   }, []);
-// login 
+
+  // login 
   if (currentView === 'login') {
     return (
       <div style={{ padding: '20px', maxWidth: '400px', margin: '50px auto' }}>
@@ -342,7 +412,7 @@ function App() {
     );
   }
 
-  // Register form
+  // Reg
   if (currentView === 'register') {
     return (
       <div style={{ padding: '20px', maxWidth: '400px', margin: '50px auto' }}>
@@ -422,12 +492,12 @@ function App() {
           </div>
         )}
 
-        {/* Group creation */}
+        {/* group create */}
         <div style={{ marginBottom: '20px', padding: '10px', border: '1px solid #ddd', borderRadius: '5px' }}>
           <h4>Create Group</h4>
-          <input 
-            value={newGroupName} 
-            onChange={(e) => setNewGroupName(e.target.value)} 
+          <input
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
             placeholder="Group name"
             style={{ width: '100%', padding: '5px', marginBottom: '10px' }}
           />
@@ -498,12 +568,12 @@ function App() {
         <h4>Your Groups</h4>
         <div>
           {groups.map(group => (
-            <div 
-              key={group._id} 
+            <div
+              key={group._id}
               onClick={() => selectGroup(group)}
-              style={{ 
-                cursor: 'pointer', 
-                marginBottom: '10px', 
+              style={{
+                cursor: 'pointer',
+                marginBottom: '10px',
                 padding: '10px',
                 border: '1px solid #ddd',
                 backgroundColor: selectedGroup?._id === group._id ? '#e3f2fd' : 'white'
@@ -524,14 +594,14 @@ function App() {
           <>
             <div style={{ padding: '15px', borderBottom: '1px solid #ccc', backgroundColor: '#f5f5f5' }}>
               <h4>
-                {selectedUser 
+                {selectedUser
                   ? `${selectedUser.firstname} ${selectedUser.lastname}`
                   : selectedGroup?.name
                 }
               </h4>
             </div>
 
-            {/* Messages Area */}
+             {/* messages area  */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
               {messages.map((msg, index) => (
                 <div
@@ -541,36 +611,217 @@ function App() {
                     padding: '8px',
                     borderRadius: '5px',
                     maxWidth: '70%',
-                    backgroundColor: msg.sender === user?._id || msg.sender?._id === user?._id ? '#dcf8c6' : '#f1f1f1',
-                    marginLeft: msg.sender === user?._id || msg.sender?._id === user?._id ? 'auto' : '0',
-                    marginRight: msg.sender === user?._id || msg.sender?._id === user?._id ? '0' : 'auto'
+                    backgroundColor:
+                      msg.sender === user?._id || msg.sender?._id === user?._id
+                        ? '#dcf8c6'
+                        : '#f1f1f1',
+                    marginLeft:
+                      msg.sender === user?._id || msg.sender?._id === user?._id
+                        ? 'auto'
+                        : '0',
+                    marginRight:
+                      msg.sender === user?._id || msg.sender?._id === user?._id
+                        ? '0'
+                        : 'auto'
                   }}
                 >
-                  {/* Show sender name for group messages */}
+                 
                   {selectedGroup && msg.sender?._id !== user?._id && (
-                    <div style={{ fontSize: '12px', color: '#666', marginBottom: '3px', fontWeight: 'bold' }}>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        color: '#666',
+                        marginBottom: '3px',
+                        fontWeight: 'bold'
+                      }}
+                    >
                       {msg.sender?.firstname} {msg.sender?.lastname}
                     </div>
                   )}
-                  <div>{msg.content}</div>
+
+                 
+                  {msg.content && <div>{msg.content}</div>}
+
+                  {/* file show and onclick open in div */}
+                  {isImage(msg.file) && (
+                    <div style={{ marginTop: '5px' }}>
+                      {msg.fileType?.startsWith('image/') ? (
+                        <img
+                          src={msg.file}
+                          alt="attachment"
+                          style={{
+                            maxWidth: '200px',
+                            maxHeight: '200px',
+                            borderRadius: '5px',
+                            cursor: 'pointer'
+                          }}
+                          onClick={() => setPreviewFile(msg.file)}
+                        />
+                      ) : (
+                        <div
+                          onClick={() => setPreviewFile(msg.file)}
+                          style={{
+                            color: '#007bff',
+                            textDecoration: 'underline',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          📎 {msg.file || 'Download file'}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* given reaction  */}
+                  {msg.reactions?.length > 0 && (
+                    <div style={{ marginTop: '5px', fontSize: '14px' }}>
+                      {msg.reactions.map((reaction, i) => (
+                        <span key={i} style={{ marginRight: '8px' }}>
+                          {reaction.emoji} {reaction.user?.firstname}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ fontSize: '11px', color: '#666', marginTop: '5px' }}>
                     {new Date(msg.createdAt).toLocaleTimeString()}
                   </div>
+
+                  {/* reaction*/}
+                  <div style={{ marginTop: '5px', display: 'flex', gap: '2px', backgroundColor: "#efe8e8ff", borderRadius: "6px", alignSelf: 'flex-end' }}>
+                    {['👍', '❤️', '😂', '😮', '😢'].map((emoji) => (
+                      <button
+                        key={emoji}
+                        onClick={() => handleReaction(msg._id, emoji)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontSize: '16px'
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ))}
+
               <div ref={messagesEndRef} />
+
+              {/* preview file but image breaking */}
+              {previewFile && (
+                <div
+                  style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    width: '100vw',
+                    height: '100vh',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    // backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                    zIndex: 9999
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'relative',
+                      backgroundColor: '#fff',
+                      padding: '20px',
+                      borderRadius: '10px',
+                      maxWidth: '90%',
+                      maxHeight: '90%',
+                      overflow: 'auto'
+                    }}
+                  >
+                    <button
+                      onClick={() => setPreviewFile(null)}
+                      style={{
+                        position: 'absolute',
+                        top: '10px',
+                        right: '15px',
+                        fontSize: '18px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                        color: '#000'
+                      }}
+                    >
+                      ✕
+                    </button>
+                    <img
+                      src={previewFile}
+                      alt="preview"
+                      style={{
+                        maxWidth: '100%',
+                        maxHeight: '80vh',
+                        display: 'block',
+                        margin: '0 auto'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
-            <div style={{ padding: '10px', borderTop: '1px solid #ccc', display: 'flex' }}>
-              <input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type a message..."
-                style={{ flex: 1, padding: '8px', marginRight: '10px' }}
-                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-              />
-              <button onClick={sendMessage} style={{ padding: '8px 15px' }}>Send</button>
+
+            <div style={{ padding: '10px', borderTop: '1px solid #ccc' }}>
+
+              {selectedFile && (
+                <div style={{
+                  marginBottom: '10px',
+                  padding: '8px',
+                  backgroundColor: '#f0f0f0',
+                  borderRadius: '5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <span>📎 {selectedFile.name}</span>
+                  <button
+                    onClick={() => setSelectedFile(null)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'red',
+                      cursor: 'pointer',
+                      fontSize: '16px'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+
+              <div style={{ display: 'flex' }}>
+                <input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type a message..."
+                  style={{ flex: 1, padding: '8px', marginRight: '10px' }}
+                  onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                />
+                <input
+                  type="file"
+                  onChange={(e) => setSelectedFile(e.target.files[0])}
+                  style={{ marginRight: '10px' }}
+                />
+                <button
+                  onClick={sendMessage}
+                  style={{
+                    padding: '8px 15px',
+                    opacity: (!newMessage.trim() && !selectedFile) ? 0.5 : 1
+                  }}
+                  disabled={!newMessage.trim() && !selectedFile}
+                >
+                  Send
+                </button>
+              </div>
             </div>
           </>
         ) : (

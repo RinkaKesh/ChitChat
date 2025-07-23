@@ -7,7 +7,7 @@ exports.sendMessage = async (req, res) => {
     const { receiver, content, groupId } = req.body;
     const sender = req.userId;
 
-    if (!content || (!receiver && !groupId)) {
+    if ((!content && !req.file) || (!receiver && !groupId))  {
       return res.status(400).send({
         message: "Message content and target (receiver or groupId) are required"
       });
@@ -191,5 +191,55 @@ exports.markReadMsg = async (req, res) => {
     res.status(200).send({ success: true });
   } catch (error) {
     res.status(500).send({ message: error.message });
+  }
+};
+
+
+
+exports.reactToMessage = async (req, res) => {
+  try {
+    const { id } = req.params; 
+    const { emoji } = req.body;
+    const userId = req.userId;
+
+    const message = await MessageModel.findById(id);
+    if (!message) {
+      return res.status(404).send({ message: "Message not found" });
+    }
+
+    const existingReactionIndex = message.reactions.findIndex(
+      (r) => r.user.toString() === userId
+    );
+
+    if (existingReactionIndex !== -1) {
+      // If user already reacted with the same emoji, remove it
+      if (message.reactions[existingReactionIndex].emoji === emoji) {
+        message.reactions.splice(existingReactionIndex, 1);
+      } else {
+        // If different emoji, update it
+        message.reactions[existingReactionIndex].emoji = emoji;
+      }
+    } else {
+      // Add new reaction
+      message.reactions.push({ user: userId, emoji });
+    }
+
+    await message.save();
+    const updatedMessage = await MessageModel.findById(id).populate("reactions.user", "firstname lastname");
+
+    // Emit socket update
+    const io = req.app.get("io");
+    if (io) {
+      if (message.groupId) {
+        io.to(`group-${message.groupId}`).emit("reactionUpdated", { messageId: id, reactions: updatedMessage.reactions });
+      } else {
+        io.to(message.receiver.toString()).emit("reactionUpdated", { messageId: id, reactions: updatedMessage.reactions });
+        io.to(message.sender.toString()).emit("reactionUpdated", { messageId: id, reactions: updatedMessage.reactions });
+      }
+    }
+
+    res.status(200).send({ message: "Reaction updated", data: updatedMessage });
+  } catch (err) {
+    res.status(500).send({ message: "Failed to react to message", error: err.message });
   }
 };

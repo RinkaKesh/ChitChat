@@ -15,10 +15,12 @@ const upload = multer({ storage: storeImage })
 
 module.exports = (app) => {
 
-    app.post("/api/messages",authMiddleware.verifytoken,upload.any("file"),messageController.sendMessage);
+    app.post("/api/messages",authMiddleware.verifytoken,upload.single("file"),messageController.sendMessage);
     app.get("/api/messages/:id", authMiddleware.verifytoken, messageController.getMessages);
     app.patch("/api/messages/read/:id", authMiddleware.verifytoken, messageController.markReadMsg);
     app.put("/api/messages/:id", authMiddleware.verifytoken, messageController.updateMessage);
     app.delete("/api/messages/:id", authMiddleware.verifytoken, messageController.deleteMessage);
+    app.patch("/api/messages/:id/react", authMiddleware.verifytoken, messageController.reactToMessage);
+
 };
 

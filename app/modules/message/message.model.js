@@ -9,16 +9,16 @@ const messageSchema = new mongoose.Schema({
     receiver: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "user",
-        required: function() {
+        required: function () {
             return !this.groupId;
         }
     },
     content: {
         type: String,
-        required: true,
     },
     file: {
-        type: String
+        type: String,
+        default: ""
     },
     read: {
         type: Boolean,
@@ -32,10 +32,23 @@ const messageSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "group",
         default: null
-    }
+    },
+    reactions: [
+        {
+            user: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "user",
+                required: true,
+            },
+            emoji: {
+                type: String,
+                required: true,
+            }
+        }
+    ]
 });
 
-messageSchema.pre('validate', function(next) {
+messageSchema.pre('validate', function (next) {
     if (!this.receiver && !this.groupId) {
         this.invalidate('receiver', 'Either receiver or groupId must be specified');
         this.invalidate('groupId', 'Either receiver or groupId must be specified');
